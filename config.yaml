@@ -1,0 +1,23 @@
+# Exegol MCP Server Configuration
+
+exegol:
+  # Path to Exegol CLI executable
+  # Use "exegol" if in PATH, or full path like "/usr/local/bin/exegol"
+  path: "exegol"
+
+timeout:
+  # Command execution timeout in seconds (fixed at 3 minutes per spec)
+  command_execution: 180
+
+logging:
+  # Logging verbosity: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+
+  # Log output format: json or text
+  # json format recommended for production (structured logging)
+  format: "json"
+
+mcp:
+  # MCP server identification
+  server_name: "exegol-mcp-server"
+  version: "0.1.0"
