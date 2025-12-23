@@ -7,7 +7,7 @@ exegol:
 
 timeout:
   # Command execution timeout in seconds (fixed at 3 minutes per spec)
-  command_execution: 180
+  command_execution: 600
 
 logging:
   # Logging verbosity: DEBUG, INFO, WARNING, ERROR
@@ -21,3 +21,24 @@ mcp:
   # MCP server identification
   server_name: "exegol-mcp-server"
   version: "0.1.0"
+
+  # Compact mode: reduce token usage by simplifying response format
+  # When true: uses shorter field names and omits metadata
+  # When false: uses standard verbose format (default)
+  compact_mode: true
+
+sessions:
+  # Persistent sessions: maintain long-running shell sessions
+  # When true: reuses bash sessions for multiple commands (more efficient)
+  # When false: creates new process for each command (default)
+  enabled: false
+
+  # Idle timeout: close sessions after N seconds of inactivity
+  idle_timeout: 300
+
+parsing:
+  # Automatic output parsing: intelligently parse pentest tool outputs
+  # When true: detects and parses outputs from nmap, subfinder, gobuster, etc.
+  # Adds structured "parsed_output" field to responses
+  # When false: returns raw output only (default)
+  auto_parse: true
