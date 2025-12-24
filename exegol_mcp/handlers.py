@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 import time
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from .models import (
     Config,
@@ -27,6 +27,7 @@ from .cli_wrappers import (
     check_exegol_version,
 )
 from .output_parser import OutputParser
+from .workflows import WorkflowManager, WorkflowCategory, WorkflowDifficulty
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +285,209 @@ async def handle_exegol_status(
             ),
             metadata={
                 "tool": "exegol_status",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            },
+        )
+
+
+async def handle_list_workflows(
+    category: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    tags: Optional[list] = None,
+) -> MCPResponse:
+    """
+    MCP tool handler for listing available workflows.
+
+    Args:
+        category: Optional category filter
+        difficulty: Optional difficulty filter
+        tags: Optional tags filter
+
+    Returns:
+        MCPResponse with workflows list
+    """
+    logger.info("MCP tool list_workflows invoked")
+
+    try:
+        # Convert string filters to enums if provided
+        category_enum = WorkflowCategory(category) if category else None
+        difficulty_enum = WorkflowDifficulty(difficulty) if difficulty else None
+
+        # List workflows
+        workflows = WorkflowManager.list_workflows(
+            category=category_enum,
+            difficulty=difficulty_enum,
+            tags=tags,
+        )
+
+        # Convert to dict format
+        workflows_data = [workflow.to_dict() for workflow in workflows]
+
+        return MCPResponse(
+            success=True,
+            data={
+                "workflows": workflows_data,
+                "total_count": len(workflows),
+            },
+            metadata={
+                "tool": "list_workflows",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            },
+        )
+
+    except Exception as e:
+        logger.exception("Unexpected error in list_workflows")
+        return MCPResponse(
+            success=False,
+            error=ErrorDetails(
+                error_code="UNKNOWN_ERROR",
+                message=str(e),
+                details="An unexpected error occurred while listing workflows",
+                remediation="Check server logs for details",
+            ),
+            metadata={
+                "tool": "list_workflows",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            },
+        )
+
+
+async def handle_run_workflow(
+    workflow_name: str,
+    container_name: str,
+    params: Dict[str, str],
+    cfg: Config,
+    session_manager: Optional[any] = None,
+) -> MCPResponse:
+    """
+    MCP tool handler for running a predefined workflow.
+
+    Args:
+        workflow_name: Name of the workflow to run
+        container_name: Exegol container to execute in
+        params: Workflow parameters
+        cfg: Configuration object
+        session_manager: Optional SessionManager instance
+
+    Returns:
+        MCPResponse with workflow execution results
+    """
+    logger.info(f"MCP tool run_workflow invoked: {workflow_name}")
+
+    try:
+        # Get workflow
+        workflow = WorkflowManager.get_workflow(workflow_name)
+        if not workflow:
+            return MCPResponse(
+                success=False,
+                error=ErrorDetails(
+                    error_code="WORKFLOW_NOT_FOUND",
+                    message=f"Workflow '{workflow_name}' not found",
+                    details=f"The workflow '{workflow_name}' does not exist",
+                    remediation="Use list_workflows to see available workflows",
+                ),
+                metadata={
+                    "tool": "run_workflow",
+                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                },
+            )
+
+        # Validate parameters
+        missing_params = WorkflowManager.validate_params(workflow, params)
+        if missing_params:
+            return MCPResponse(
+                success=False,
+                error=ErrorDetails(
+                    error_code="MISSING_PARAMETERS",
+                    message=f"Missing required parameters: {', '.join(missing_params)}",
+                    details=f"Workflow '{workflow_name}' requires: {workflow.required_params}",
+                    remediation=f"Provide all required parameters: {', '.join(missing_params)}",
+                ),
+                metadata={
+                    "tool": "run_workflow",
+                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                },
+            )
+
+        # Execute workflow steps
+        results = []
+        for step in workflow.steps:
+            try:
+                # Render command with parameters
+                command = step.render(params)
+
+                logger.info(f"Executing step: {step.name}")
+
+                # Execute command
+                if cfg.use_persistent_sessions and session_manager:
+                    result = await exec_via_session(
+                        container_name, command, cfg, session_manager
+                    )
+                else:
+                    result = await exec_exegol_command(container_name, command, cfg)
+
+                results.append({
+                    "step_name": step.name,
+                    "description": step.description,
+                    "command": command,
+                    "success": result.exit_code == 0,
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "execution_time_ms": result.execution_time_ms,
+                })
+
+                # Stop if step failed and continue_on_failure is False
+                if result.exit_code != 0 and not step.continue_on_failure:
+                    logger.warning(f"Step '{step.name}' failed, stopping workflow")
+                    break
+
+            except Exception as e:
+                logger.error(f"Error executing step '{step.name}': {e}")
+                results.append({
+                    "step_name": step.name,
+                    "description": step.description,
+                    "command": step.command_template,
+                    "success": False,
+                    "error": str(e),
+                })
+
+                if not step.continue_on_failure:
+                    break
+
+        # Return results
+        all_successful = all(r.get("success", False) for r in results)
+
+        return MCPResponse(
+            success=True,
+            data={
+                "workflow_name": workflow_name,
+                "workflow_description": workflow.description,
+                "container_name": container_name,
+                "parameters": params,
+                "steps_executed": len(results),
+                "total_steps": len(workflow.steps),
+                "all_successful": all_successful,
+                "results": results,
+            },
+            metadata={
+                "tool": "run_workflow",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            },
+        )
+
+    except Exception as e:
+        logger.exception("Unexpected error in run_workflow")
+        return MCPResponse(
+            success=False,
+            error=ErrorDetails(
+                error_code="UNKNOWN_ERROR",
+                message=str(e),
+                details="An unexpected error occurred while running the workflow",
+                remediation="Check server logs for details",
+            ),
+            metadata={
+                "tool": "run_workflow",
                 "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             },
         )

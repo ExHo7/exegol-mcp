@@ -39,6 +39,7 @@ htmlcov/
 .specify/
 specs/
 tests/
+exegol_mcp_old.py
 
 # IDEs
 .vscode/
@@ -62,3 +63,5 @@ Thumbs.db
 # AI
 .claude
 CLAUDE.md
+
+

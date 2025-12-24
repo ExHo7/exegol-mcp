@@ -21,7 +21,13 @@ from mcp.types import Tool, TextContent
 from .config import load_config
 from .exceptions import ExegolMCPError
 from .logging_setup import setup_logging
-from .handlers import handle_exegol_exec, handle_exegol_list, handle_exegol_status
+from .handlers import (
+    handle_exegol_exec,
+    handle_exegol_list,
+    handle_exegol_status,
+    handle_list_workflows,
+    handle_run_workflow,
+)
 from .models import Config, MCPResponse, ErrorDetails
 from .session_manager import SessionManager, SessionConfig
 
@@ -113,6 +119,53 @@ async def main() -> None:
                     "properties": {},
                 },
             ),
+            Tool(
+                name="list_workflows",
+                description="List all available predefined pentest workflows with optional filtering by category, difficulty, or tags.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "description": "Filter by category (recon, enumeration, vulnerability_scan, exploitation, post_exploitation, web, network)",
+                            "enum": ["recon", "enumeration", "vulnerability_scan", "exploitation", "post_exploitation", "web", "network"],
+                        },
+                        "difficulty": {
+                            "type": "string",
+                            "description": "Filter by difficulty level",
+                            "enum": ["easy", "medium", "hard"],
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Filter by tags (any match)",
+                        },
+                    },
+                },
+            ),
+            Tool(
+                name="run_workflow",
+                description="Execute a predefined pentest workflow in an Exegol container. The workflow will run multiple steps sequentially with the provided parameters.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "workflow_name": {
+                            "type": "string",
+                            "description": "Name of the workflow to execute (use list_workflows to see available workflows)",
+                        },
+                        "container_name": {
+                            "type": "string",
+                            "description": "Name of the Exegol container to execute the workflow in",
+                        },
+                        "params": {
+                            "type": "object",
+                            "description": "Workflow parameters as key-value pairs (required params depend on the workflow)",
+                            "additionalProperties": {"type": "string"},
+                        },
+                    },
+                    "required": ["workflow_name", "container_name", "params"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -133,6 +186,20 @@ async def main() -> None:
 
             elif name == "exegol_status":
                 response = await handle_exegol_status(config, server_start_time)
+
+            elif name == "list_workflows":
+                category = arguments.get("category")
+                difficulty = arguments.get("difficulty")
+                tags = arguments.get("tags")
+                response = await handle_list_workflows(category, difficulty, tags)
+
+            elif name == "run_workflow":
+                workflow_name = arguments.get("workflow_name", "")
+                container_name = arguments.get("container_name", "")
+                params = arguments.get("params", {})
+                response = await handle_run_workflow(
+                    workflow_name, container_name, params, config, session_manager
+                )
 
             else:
                 response = MCPResponse(
@@ -170,7 +237,7 @@ async def main() -> None:
     logger.info(
         "MCP server initialized",
         extra={
-            "tools_registered": 3,
+            "tools_registered": 5,
             "server_name": config.server_name,
             "server_version": config.server_version,
         },
@@ -180,7 +247,7 @@ async def main() -> None:
     print(f"✓ Server: {config.server_name} v{config.server_version}", file=sys.stderr)
     print(f"✓ Exegol path: {config.exegol_path}", file=sys.stderr)
     print(f"✓ Timeout: {config.command_timeout}s", file=sys.stderr)
-    print("✓ Tools registered: exegol_exec, exegol_list, exegol_status", file=sys.stderr)
+    print("✓ Tools registered: exegol_exec, exegol_list, exegol_status, list_workflows, run_workflow", file=sys.stderr)
     print("\n🚀 MCP server running on stdio...", file=sys.stderr)
 
     # Run the server with stdio transport
