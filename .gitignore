@@ -63,6 +63,6 @@ Thumbs.db
 # AI
 .claude
 CLAUDE.md
-claude.settings.json
+claude-settings.json
 
 
